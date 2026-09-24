@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="ClipTrace — локальный интерфейс загрузки видео и просмотра найденного отрывка."
+    />
+    <meta name="theme-color" content="#171713" />
+    <title>ClipTrace — найдите нужный момент</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="ClipTrace — главная">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span>ClipTrace</span>
+      </a>
+      <div class="topbar-actions">
+        <span class="service-state" id="serviceState">
+          <span class="state-dot" aria-hidden="true"></span>
+          <span id="serviceLabel">Проверяем сервис</span>
+        </span>
+        <a class="docs-link" href="/docs">API</a>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="pageTitle">
+        <p class="eyebrow"><span>Локальный demo</span> Видео → точный момент</p>
+        <h1 id="pageTitle">Нужный момент.<br /><em>Без перемотки.</em></h1>
+        <p class="hero-copy">
+          Загрузите MP4 и сразу посмотрите готовый отрывок с пятой по десятую секунду.
+        </p>
+        <ol class="steps" aria-label="Как это работает">
+          <li><span>01</span> Загрузите</li>
+          <li><span>02</span> Получите</li>
+          <li><span>03</span> Смотрите</li>
+        </ol>
+      </section>
+
+      <section class="workspace" aria-label="Рабочая область ClipTrace">
+        <article class="panel upload-panel">
+          <header class="panel-heading">
+            <div>
+              <span class="panel-index">01</span>
+              <h2>Добавьте видео</h2>
+            </div>
+            <span class="format-pill">MP4 · до 500 МБ</span>
+          </header>
+
+          <form id="uploadForm" novalidate>
+            <input id="fileInput" type="file" accept="video/mp4,.mp4" hidden />
+            <label class="dropzone" id="dropzone" for="fileInput" tabindex="0">
+              <span class="upload-symbol" aria-hidden="true">↑</span>
+              <strong>Перетащите видео сюда</strong>
+              <span>или нажмите, чтобы выбрать файл</span>
+            </label>
+
+            <div class="file-card" id="fileCard" hidden>
+              <span class="file-icon" aria-hidden="true">MP4</span>
+              <div class="file-details">
+                <strong id="fileName"></strong>
+                <span id="fileSize"></span>
+              </div>
+              <button class="icon-button" id="clearFileButton" type="button" aria-label="Убрать файл">×</button>
+            </div>
+
+            <label class="field-label" for="titleInput">Название <span>необязательно</span></label>
+            <input
+              class="text-input"
+              id="titleInput"
+              type="text"
+              maxlength="200"
+              placeholder="Например, семейное интервью"
+              autocomplete="off"
+            />
+
+            <div class="upload-progress" id="uploadProgress" hidden aria-live="polite">
+              <div class="progress-copy">
+                <span>Загружаем и проверяем видео</span>
+                <strong id="progressValue">0%</strong>
+              </div>
+              <div class="progress-track"><span id="progressBar"></span></div>
+            </div>
+
+            <button class="primary-button" id="uploadButton" type="submit" disabled>
+              <span>Загрузить видео</span><span aria-hidden="true">→</span>
+            </button>
+            <p class="form-note">Поддерживаются H.264, yuv420p и AAC. Минимальная длительность — 10 секунд.</p>
+            <p class="inline-message" id="uploadMessage" role="status" aria-live="polite"></p>
+          </form>
+        </article>
+
+        <article class="panel player-panel">
+          <header class="panel-heading">
+            <div>
+              <span class="panel-index">02</span>
+              <h2>Получите отрывок</h2>
+            </div>
+            <span class="demo-pill">5 → 10 сек</span>
+          </header>
+
+          <div class="player-empty" id="playerEmpty">
+            <div class="empty-orbit" aria-hidden="true"><span>▶</span></div>
+            <strong>Здесь появится ваше видео</strong>
+            <p>После загрузки можно будет получить и воспроизвести тестовый отрывок.</p>
+          </div>
+
+          <div class="player-content" id="playerContent" hidden>
+            <div class="video-shell">
+              <video id="videoPlayer" controls preload="metadata" playsinline></video>
+              <span class="video-badge">Готово к поиску</span>
+            </div>
+
+            <div class="video-summary">
+              <div>
+                <span class="summary-kicker">Текущее видео</span>
+                <h3 id="videoTitle"></h3>
+              </div>
+              <div class="metadata" id="videoMetadata"></div>
+            </div>
+
+            <form class="search-form" id="searchForm">
+              <label class="field-label" for="queryInput">
+                Описание момента <span>необязательно в demo</span>
+              </label>
+              <div class="search-row">
+                <input
+                  class="text-input search-input"
+                  id="queryInput"
+                  type="text"
+                  maxlength="500"
+                  placeholder="Например, момент перед неожиданной развязкой"
+                  autocomplete="off"
+                />
+                <button class="search-button" id="searchButton" type="submit">Получить</button>
+              </div>
+              <p class="search-hint">Сейчас работает demo-режим: любой запрос возвращает фрагмент 00:05–00:10.</p>
+              <p class="inline-message" id="searchMessage" role="status" aria-live="polite"></p>
+            </form>
+
+            <section class="result-card" id="resultCard" aria-labelledby="resultTitle" hidden>
+              <div class="result-copy">
+                <span class="result-label">Найден 1 отрывок</span>
+                <h3 id="resultTitle">Пять секунд в фокусе</h3>
+                <p><span id="resultStart">00:00:05.000</span> — <span id="resultEnd">00:00:10.000</span></p>
+              </div>
+              <button class="play-button" id="playExcerptButton" type="button">
+                <span class="play-icon" aria-hidden="true">▶</span>
+                <span>Смотреть отрывок</span>
+              </button>
+              <div class="excerpt-track" aria-hidden="true"><span></span></div>
+            </section>
+          </div>
+        </article>
+      </section>
+
+      <section class="library" aria-labelledby="libraryTitle">
+        <header class="library-heading">
+          <div>
+            <p class="eyebrow small">Сохранено локально</p>
+            <h2 id="libraryTitle">Недавние видео</h2>
+          </div>
+          <button class="text-button" id="refreshButton" type="button">Обновить список</button>
+        </header>
+        <div class="video-list" id="videoList"></div>
+        <p class="library-empty" id="libraryEmpty">Загруженные видео появятся здесь.</p>
+      </section>
+    </main>
+
+    <footer>
+      <span>ClipTrace / Backend MVP</span>
+      <span>Файлы остаются в локальном Podman-окружении</span>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

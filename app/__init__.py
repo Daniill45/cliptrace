@@ -1,0 +1,1 @@
+"""ClipTrace backend application package."""
