@@ -165,6 +165,38 @@ host URL с контейнерным host `db`.
 
 ## Архитектура
 
+```mermaid
+flowchart LR
+    UI["Web UI"] --> API["FastAPI endpoints"]
+    API --> VIDEO["VideoService"]
+    API --> SEARCH["SearchService"]
+    VIDEO --> PROBE["MediaProbe / ffprobe"]
+    VIDEO --> STORAGE["LocalStorage"]
+    VIDEO --> REPO["VideoRepository"]
+    REPO --> DB[("PostgreSQL")]
+    SEARCH --> ENGINE["FragmentSearchEngine"]
+    ENGINE --> MOCK["Current mock engine"]
+    ENGINE -. "same interface" .-> ML["Future ML engine"]
+```
+
+### Поток данных
+
+1. `POST /api/v1/videos` потоково записывает multipart-файл во временный `.part`,
+   одновременно контролируя размер и вычисляя SHA-256.
+2. `MediaProbe` проверяет контейнер, кодеки и длительность через `ffprobe`. После
+   успешной проверки файл атомарно переименовывается в UUID-based `.mp4`, а метаданные
+   сохраняются в PostgreSQL. Если запись в БД завершается ошибкой, финальный файл
+   удаляется.
+3. `POST /api/v1/videos/{video_id}/search` передаёт видео, запрос и лимит в
+   `FragmentSearchEngine`. Текущий `MockFixedTimestampSearchEngine` намеренно не
+   анализирует содержимое видео и возвращает интервал 5–10 секунд: он проверяет
+   контракт API и сценарий воспроизведения, а не семантическую релевантность.
+4. Браузер запрашивает исходный MP4 с HTTP Range, начинает воспроизведение с
+   `start_seconds` и останавливает его на `end_seconds`; отдельный файл-фрагмент не
+   создаётся.
+
+### Компоненты
+
 - Endpoint-слой адаптирует HTTP-контракт, включая Range-заголовки, и делегирует
   ресурсную логику application services.
 - `VideoService` владеет транзакционными границами загрузки и tombstone-удаления.
