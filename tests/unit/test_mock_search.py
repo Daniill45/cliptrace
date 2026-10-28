@@ -40,9 +40,19 @@ def test_mock_search_rejects_invalid_configuration() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mock_search_rejects_video_that_cannot_fit_fragment(
+@pytest.mark.parametrize(
+    ("video_duration", "expected_start", "expected_end"),
+    [(9.99, 4.99, 9.99), (1.0, 0.0, 1.0)],
+)
+async def test_mock_search_clamps_fragment_to_short_video(
     engine: MockFixedTimestampSearchEngine,
+    video_duration: float,
+    expected_start: float,
+    expected_end: float,
 ) -> None:
-    descriptor = VideoDescriptor(id=uuid4(), duration_seconds=9.99, storage_key="internal")
-    with pytest.raises(ValueError):
-        await engine.search(video=descriptor, query="q", limit=5)
+    descriptor = VideoDescriptor(
+        id=uuid4(), duration_seconds=video_duration, storage_key="internal"
+    )
+    hits = await engine.search(video=descriptor, query="q", limit=5)
+    assert hits[0].start_seconds == pytest.approx(expected_start)
+    assert hits[0].end_seconds == pytest.approx(expected_end)

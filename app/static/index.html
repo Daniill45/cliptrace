@@ -35,11 +35,11 @@
         <p class="eyebrow"><span>Локальный demo</span> Видео → точный момент</p>
         <h1 id="pageTitle">Нужный момент.<br /><em>Без перемотки.</em></h1>
         <p class="hero-copy">
-          Загрузите MP4 и сразу посмотрите готовый отрывок с пятой по десятую секунду.
+          Загрузите MP4, опишите нужный момент — ClipTrace найдёт его по смыслу речи.
         </p>
         <ol class="steps" aria-label="Как это работает">
           <li><span>01</span> Загрузите</li>
-          <li><span>02</span> Получите</li>
+          <li><span>02</span> Опишите</li>
           <li><span>03</span> Смотрите</li>
         </ol>
       </section>
@@ -92,7 +92,7 @@
             <button class="primary-button" id="uploadButton" type="submit" disabled>
               <span>Загрузить видео</span><span aria-hidden="true">→</span>
             </button>
-            <p class="form-note">Поддерживаются H.264, yuv420p и AAC. Минимальная длительность — 10 секунд.</p>
+            <p class="form-note">Поддерживаются H.264, yuv420p и AAC. После загрузки начнётся локальная ML-индексация.</p>
             <p class="inline-message" id="uploadMessage" role="status" aria-live="polite"></p>
           </form>
         </article>
@@ -101,21 +101,21 @@
           <header class="panel-heading">
             <div>
               <span class="panel-index">02</span>
-              <h2>Получите отрывок</h2>
+              <h2>Найдите момент</h2>
             </div>
-            <span class="demo-pill">5 → 10 сек</span>
+            <span class="demo-pill">ML-поиск</span>
           </header>
 
           <div class="player-empty" id="playerEmpty">
             <div class="empty-orbit" aria-hidden="true"><span>▶</span></div>
             <strong>Здесь появится ваше видео</strong>
-            <p>После загрузки можно будет получить и воспроизвести тестовый отрывок.</p>
+            <p>После загрузки дождитесь расшифровки и найдите нужный момент обычной фразой.</p>
           </div>
 
           <div class="player-content" id="playerContent" hidden>
             <div class="video-shell">
               <video id="videoPlayer" controls preload="metadata" playsinline></video>
-              <span class="video-badge">Готово к поиску</span>
+              <span class="video-badge" id="videoBadge">Проверяем индекс</span>
             </div>
 
             <div class="video-summary">
@@ -126,9 +126,25 @@
               <div class="metadata" id="videoMetadata"></div>
             </div>
 
+            <section
+              class="index-status is-loading"
+              id="indexStatus"
+              aria-labelledby="indexStatusTitle"
+              aria-live="polite"
+            >
+              <span class="index-status-icon" aria-hidden="true"></span>
+              <div class="index-status-copy">
+                <strong id="indexStatusTitle">Проверяем поисковый индекс</strong>
+                <span id="indexStatusText">Получаем актуальное состояние…</span>
+              </div>
+              <button class="index-action" id="reindexButton" type="button" hidden>
+                Переиндексировать
+              </button>
+            </section>
+
             <form class="search-form" id="searchForm">
               <label class="field-label" for="queryInput">
-                Описание момента <span>необязательно в demo</span>
+                Что происходит в нужном моменте? <span>обязательное поле</span>
               </label>
               <div class="search-row">
                 <input
@@ -136,26 +152,29 @@
                   id="queryInput"
                   type="text"
                   maxlength="500"
-                  placeholder="Например, момент перед неожиданной развязкой"
+                  placeholder="Например, где обсуждают планы на следующий год"
                   autocomplete="off"
+                  required
+                  aria-describedby="searchHint searchMessage"
                 />
-                <button class="search-button" id="searchButton" type="submit">Получить</button>
+                <button class="search-button" id="searchButton" type="submit" disabled>Найти</button>
               </div>
-              <p class="search-hint">Сейчас работает demo-режим: любой запрос возвращает фрагмент 00:05–00:10.</p>
+              <p class="search-hint" id="searchHint">Поиск станет доступен, когда расшифровка видео будет готова.</p>
               <p class="inline-message" id="searchMessage" role="status" aria-live="polite"></p>
             </form>
 
-            <section class="result-card" id="resultCard" aria-labelledby="resultTitle" hidden>
-              <div class="result-copy">
-                <span class="result-label">Найден 1 отрывок</span>
-                <h3 id="resultTitle">Пять секунд в фокусе</h3>
-                <p><span id="resultStart">00:00:05.000</span> — <span id="resultEnd">00:00:10.000</span></p>
-              </div>
-              <button class="play-button" id="playExcerptButton" type="button">
-                <span class="play-icon" aria-hidden="true">▶</span>
-                <span>Смотреть отрывок</span>
-              </button>
-              <div class="excerpt-track" aria-hidden="true"><span></span></div>
+            <section class="search-results" id="resultsSection" aria-labelledby="resultsTitle" hidden>
+              <header class="results-heading">
+                <div>
+                  <span class="summary-kicker">Результаты поиска</span>
+                  <h3 id="resultsTitle">Найденные отрывки</h3>
+                </div>
+                <span class="results-count" id="resultsCount"></span>
+              </header>
+              <div class="results-list" id="resultsList"></div>
+              <p class="results-empty" id="resultsEmpty" hidden>
+                Подходящих отрывков не найдено. Попробуйте описать момент другими словами.
+              </p>
             </section>
           </div>
         </article>

@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -26,6 +27,7 @@ from app.db.session import create_engine, create_session_factory
 from app.repositories.videos import VideoRepository
 from app.services.media.probe import MediaProbe
 from app.services.media.storage import LocalStorage
+from app.services.ml.adapters import OnnxE5Embedder
 from app.services.search.mock import MockFixedTimestampSearchEngine
 
 logger = logging.getLogger(__name__)
@@ -48,19 +50,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         binary=resolved.ffprobe_binary,
         timeout_seconds=resolved.ffprobe_timeout_seconds,
         max_duration_seconds=resolved.max_video_duration_seconds,
-        min_duration_seconds=(
-            resolved.mock_result_start_seconds + resolved.mock_result_duration_seconds
-        ),
+        min_duration_seconds=resolved.min_video_duration_seconds,
     )
     search_engine = MockFixedTimestampSearchEngine(
         start_seconds=resolved.mock_result_start_seconds,
         duration_seconds=resolved.mock_result_duration_seconds,
         min_fragment_duration_seconds=resolved.min_fragment_duration_seconds,
     )
+    query_embedder = (
+        OnnxE5Embedder(
+            model_name=resolved.embedding_model,
+            revision=resolved.embedding_model_revision,
+            device=resolved.embedding_device,
+            dimension=384,
+            cache_folder=resolved.ml_model_cache_dir / "huggingface",
+            batch_size=resolved.embedding_batch_size,
+        )
+        if resolved.search_engine == "semantic"
+        else None
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await storage.initialize()
+        if resolved.search_engine == "semantic":
+            await anyio.to_thread.run_sync(
+                lambda: resolved.ml_model_cache_dir.mkdir(parents=True, exist_ok=True)
+            )
         try:
             async with session_factory() as session:
                 await session.execute(select(Video.id).limit(1))
@@ -89,6 +105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.storage = storage
     app.state.media_probe = media_probe
     app.state.search_engine = search_engine
+    app.state.query_embedder = query_embedder
 
     app.include_router(health_router)
     app.include_router(api_v1_router, prefix=resolved.api_v1_prefix)

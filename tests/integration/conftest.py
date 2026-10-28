@@ -52,8 +52,8 @@ def _make_video(path: Path, *, duration: float, audio: bool = True) -> bytes:
 def media_fixtures(tmp_path_factory: pytest.TempPathFactory) -> dict[str, bytes]:
     root = tmp_path_factory.mktemp("media")
     valid = _make_video(root / "valid.mp4", duration=12.0)
-    threshold = _make_video(root / "threshold.mp4", duration=10.0)
-    short = _make_video(root / "short.mp4", duration=9.5)
+    threshold = _make_video(root / "threshold.mp4", duration=1.0)
+    short = _make_video(root / "short.mp4", duration=0.5)
     no_audio = _make_video(root / "no-audio.mp4", duration=12.0, audio=False)
     return {
         "valid": valid,

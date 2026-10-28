@@ -125,6 +125,11 @@ class LocalStorage:
 
         return await anyio.to_thread.run_sync(check)
 
+    async def verified_path(self, storage_key: str, expected_size: int) -> Path:
+        """Return an internal regular-file path after the same checks used for streaming."""
+        await self.verify(storage_key, expected_size)
+        return self._path_for_key(storage_key)
+
     async def open_verified(self, storage_key: str, expected_size: int) -> BinaryIO:
         """Open and fstat a file descriptor without following a final symlink."""
         path = self._path_for_key(storage_key)

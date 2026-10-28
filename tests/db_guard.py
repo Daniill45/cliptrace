@@ -34,4 +34,6 @@ async def truncate_videos(connection: AsyncConnection) -> None:
             f"Refusing TRUNCATE outside {EXPECTED_TEST_DATABASE!r}; "
             f"connected database is {database_name!r}"
         )
-    await connection.execute(text("TRUNCATE TABLE videos"))
+    await connection.execute(
+        text("TRUNCATE TABLE video_fragments, video_search_indexes, videos RESTART IDENTITY")
+    )

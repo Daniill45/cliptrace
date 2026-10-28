@@ -51,7 +51,10 @@ def test_test_database_url_guard_accepts_only_expected_database() -> None:
     ("database_name", "expected_statements"),
     [
         ("cliptrace", []),
-        (EXPECTED_TEST_DATABASE, ["TRUNCATE TABLE videos"]),
+        (
+            EXPECTED_TEST_DATABASE,
+            ["TRUNCATE TABLE video_fragments, video_search_indexes, videos RESTART IDENTITY"],
+        ),
     ],
 )
 async def test_runtime_database_guard_checks_connection_before_truncate(

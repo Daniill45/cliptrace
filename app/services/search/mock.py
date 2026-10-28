@@ -1,5 +1,7 @@
 """Explicit deterministic mock fragment search engine."""
 
+import math
+
 from app.services.search.base import SearchHit, VideoDescriptor
 
 
@@ -7,7 +9,7 @@ class MockFixedTimestampSearchEngine:
     """Return one configured interval without inspecting video contents."""
 
     mode = "mock"
-    version = "mock-fixed-v2"
+    version = "mock-fixed-v3"
 
     def __init__(
         self,
@@ -32,12 +34,14 @@ class MockFixedTimestampSearchEngine:
         limit: int,
     ) -> list[SearchHit]:
         del query, limit
-        end = self._start + self._duration
-        if video.duration_seconds < end:
-            raise ValueError("Video cannot contain the configured mock fragment")
+        if not math.isfinite(video.duration_seconds) or video.duration_seconds <= 0:
+            raise ValueError("Video duration must be positive and finite")
+        end = min(self._start + self._duration, video.duration_seconds)
+        duration = min(self._duration, video.duration_seconds)
+        start = max(0.0, end - duration)
         return [
             SearchHit(
-                start_seconds=self._start,
+                start_seconds=start,
                 end_seconds=end,
                 score=None,
                 preview_text=None,
