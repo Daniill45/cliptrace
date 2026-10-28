@@ -21,6 +21,7 @@ from app.core.errors import (
     VideoNotReadyError,
 )
 from app.db.models.video import Video, VideoStatus
+from app.repositories.search import SearchIndexRepository
 from app.repositories.videos import VideoRepository
 from app.services.media.probe import MediaProbe
 from app.services.media.storage import LocalStorage
@@ -47,11 +48,13 @@ class VideoService:
         repository: VideoRepository,
         storage: LocalStorage,
         media_probe: MediaProbe,
+        search_indexes: SearchIndexRepository | None = None,
     ) -> None:
         self._session = session
         self._repository = repository
         self._storage = storage
         self._media_probe = media_probe
+        self._search_indexes = search_indexes
 
     async def create(self, *, upload: UploadFile, title: str | None) -> Video:
         """Validate, store, and persist one upload or leave no final artifact."""
@@ -96,6 +99,8 @@ class VideoService:
             try:
                 async with self._session.begin():
                     await self._repository.create(video)
+                    if self._search_indexes is not None:
+                        await self._search_indexes.create_pending(video.id)
             except BaseException:
                 await self._storage.remove_final(storage_key)
                 raise

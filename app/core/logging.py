@@ -23,11 +23,15 @@ class JsonFormatter(logging.Formatter):
             "status_code",
             "duration_ms",
             "video_id",
+            "worker_id",
+            "fragment_count",
             "error_code",
         ):
             value = getattr(record, name, None)
             if value is not None:
                 payload[name] = value
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 

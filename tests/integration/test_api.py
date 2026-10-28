@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import timedelta
+from typing import cast
 from uuid import UUID
 
 import httpx
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from app.core.config import Settings
 from app.db.session import create_engine
 from app.main import create_app
+from app.repositories.search import FragmentInput, SearchIndexRepository
+from app.services.ml.contracts import Embedding
 from tests.db_guard import EXPECTED_TEST_DATABASE
 
 
@@ -67,7 +73,7 @@ async def test_full_video_lifecycle_and_range_contract(
     search = searched.json()
     assert search["query"] == "moment about failure"
     assert search["mode"] == "mock"
-    assert search["engine_version"] == "mock-fixed-v2"
+    assert search["engine_version"] == "mock-fixed-v3"
     assert len(search["results"]) == 1
     hit = search["results"][0]
     assert hit["start_seconds"] == 5.0
@@ -179,7 +185,16 @@ async def test_threshold_duration_is_accepted(
 ) -> None:
     response = await _upload(client, media_fixtures["threshold"])
     assert response.status_code == 201, response.text
-    assert response.json()["media"]["duration_seconds"] == pytest.approx(10.0, abs=0.05)
+    assert response.json()["media"]["duration_seconds"] == pytest.approx(1.0, abs=0.1)
+    video_id = response.json()["id"]
+    searched = await client.post(
+        f"/api/v1/videos/{video_id}/search",
+        json={"query": "short mock fragment"},
+    )
+    assert searched.status_code == 200, searched.text
+    result = searched.json()["results"][0]
+    assert result["start_seconds"] == 0.0
+    assert result["end_seconds"] == pytest.approx(1.0, abs=0.1)
 
 
 @pytest.mark.asyncio
@@ -362,7 +377,7 @@ async def test_frontend_assets_do_not_shadow_api_or_docs(client: httpx.AsyncClie
     assert frontend.status_code == 200
     assert frontend.headers["content-type"].startswith("text/html")
     assert "ClipTrace" in frontend.text
-    assert "00:05" in frontend.text and "00:10" in frontend.text
+    assert "ML-поиск" in frontend.text and "по смыслу речи" in frontend.text
 
     stylesheet = await client.get("/assets/styles.css")
     script = await client.get("/assets/app.js")
@@ -452,3 +467,120 @@ async def test_integration_database_is_isolated_and_migrated(
 
     assert database_name == EXPECTED_TEST_DATABASE
     assert applied_revisions == expected_heads
+
+
+class _FakeSemanticEmbedder:
+    model_id = "fake-e5-integration-v1"
+    dimension = 384
+
+    async def embed_query(self, text: str) -> Embedding:
+        assert text == "первый сюжет"
+        return (1.0, *([0.0] * 383))
+
+    async def embed_documents(self, texts: Sequence[str]) -> Sequence[Embedding]:
+        raise AssertionError(f"online API must not index documents: {texts!r}")
+
+
+@pytest.mark.asyncio
+async def test_semantic_index_lifecycle_and_exact_pgvector_search(
+    settings: Settings,
+    clean_database: None,
+    media_fixtures: dict[str, bytes],
+) -> None:
+    del clean_database
+    semantic_settings = settings.model_copy(update={"search_engine": "semantic"})
+    application = create_app(semantic_settings)
+    application.state.query_embedder = _FakeSemanticEmbedder()
+
+    async with application.router.lifespan_context(application):
+        transport = httpx.ASGITransport(app=application, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            created = await _upload(client, media_fixtures["valid"])
+            assert created.status_code == 201, created.text
+            video_id = UUID(created.json()["id"])
+
+            pending = await client.get(f"/api/v1/videos/{video_id}/search-index")
+            assert pending.status_code == 200
+            assert pending.json()["status"] == "pending"
+            assert pending.json()["fragment_count"] == 0
+
+            blocked = await client.post(
+                f"/api/v1/videos/{video_id}/search",
+                json={"query": "первый сюжет", "limit": 2},
+            )
+            assert blocked.status_code == 409
+            assert blocked.json()["error"]["code"] == "SEARCH_INDEX_NOT_READY"
+
+            factory = cast(async_sessionmaker[AsyncSession], application.state.session_factory)
+            async with factory() as session:
+                async with session.begin():
+                    repository = SearchIndexRepository(session)
+                    claimed = await repository.claim_next(
+                        worker_id="integration-worker",
+                        lease_duration=timedelta(minutes=1),
+                    )
+                    assert claimed is not None and claimed.video_id == video_id
+            async with factory() as session:
+                async with session.begin():
+                    await SearchIndexRepository(session).requeue(
+                        video_id,
+                        worker_id="integration-worker",
+                    )
+            requeued = await client.get(f"/api/v1/videos/{video_id}/search-index")
+            assert requeued.json()["status"] == "pending"
+            async with factory() as session:
+                async with session.begin():
+                    claimed = await SearchIndexRepository(session).claim_next(
+                        worker_id="integration-worker",
+                        lease_duration=timedelta(minutes=1),
+                    )
+                    assert claimed is not None and claimed.video_id == video_id
+            first_embedding = (1.0, *([0.0] * 383))
+            second_embedding = (0.0, 1.0, *([0.0] * 382))
+            async with factory() as session:
+                async with session.begin():
+                    await SearchIndexRepository(session).complete(
+                        video_id,
+                        worker_id="integration-worker",
+                        fragments=(
+                            FragmentInput(0, 2.0, 4.0, "первый сюжет", first_embedding, "ru"),
+                            FragmentInput(1, 7.0, 9.0, "второй сюжет", second_embedding, "ru"),
+                        ),
+                        pipeline_version="integration-v1",
+                        asr_model_version="fake-asr-v1",
+                        embedding_model_version="fake-e5-v1",
+                    )
+
+            ready = await client.get(f"/api/v1/videos/{video_id}/search-index")
+            assert ready.status_code == 200
+            assert ready.json()["status"] == "ready"
+            assert ready.json()["fragment_count"] == 2
+            assert ready.json()["indexed_at"] is not None
+
+            searched = await client.post(
+                f"/api/v1/videos/{video_id}/search",
+                json={"query": "первый сюжет", "limit": 2},
+            )
+            assert searched.status_code == 200, searched.text
+            payload = searched.json()
+            assert payload["mode"] == "semantic-transcript"
+            assert [item["preview_text"] for item in payload["results"]] == [
+                "первый сюжет",
+                "второй сюжет",
+            ]
+            assert payload["results"][0]["score"] == pytest.approx(1.0)
+            assert payload["results"][0]["start_seconds"] == 1.0
+            assert payload["results"][0]["end_seconds"] == 5.0
+
+            reindexed = await client.post(f"/api/v1/videos/{video_id}/search-index/reindex")
+            assert reindexed.status_code == 202
+            assert reindexed.json()["status"] == "pending"
+            assert reindexed.json()["fragment_count"] == 2
+            blocked_again = await client.post(
+                f"/api/v1/videos/{video_id}/search",
+                json={"query": "первый сюжет"},
+            )
+            assert blocked_again.status_code == 409
+
+            assert (await client.delete(f"/api/v1/videos/{video_id}")).status_code == 204
+            assert (await client.get(f"/api/v1/videos/{video_id}/search-index")).status_code == 404

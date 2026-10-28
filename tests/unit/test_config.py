@@ -9,12 +9,14 @@ def test_default_mock_invariants() -> None:
     assert settings.mock_result_start_seconds == 5.0
     assert settings.mock_result_duration_seconds == 5.0
     assert settings.min_fragment_duration_seconds == 5.0
+    assert settings.min_video_duration_seconds == 1.0
 
 
 @pytest.mark.parametrize(
     "override",
     [
         {"upload_chunk_size_bytes": 2, "max_upload_size_bytes": 1},
+        {"min_video_duration_seconds": 20, "max_video_duration_seconds": 10},
         {"mock_result_start_seconds": -1},
         {"mock_result_duration_seconds": 0},
         {"min_fragment_duration_seconds": 0},

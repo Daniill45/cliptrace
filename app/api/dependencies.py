@@ -12,10 +12,14 @@ from starlette.datastructures import FormData, UploadFile
 
 from app.core.config import Settings
 from app.core.errors import RequestValidationDomainError
+from app.repositories.search import SearchIndexRepository
 from app.repositories.videos import VideoRepository
 from app.services.media.probe import MediaProbe
 from app.services.media.storage import LocalStorage
+from app.services.ml.contracts import QueryEmbedder
 from app.services.search.base import FragmentSearchEngine
+from app.services.search.indexes import ReadySearchIndexStore, SearchIndexService
+from app.services.search.semantic import SemanticFragmentSearchEngine
 from app.services.search.service import SearchService
 from app.services.videos import VideoService
 
@@ -45,12 +49,29 @@ def get_media_probe(request: Request) -> MediaProbe:
     return cast(MediaProbe, request.app.state.media_probe)
 
 
-def get_search_engine(request: Request) -> FragmentSearchEngine:
-    return cast(FragmentSearchEngine, request.app.state.search_engine)
-
-
 def get_video_repository(session: Annotated[AsyncSession, Depends(get_session)]) -> VideoRepository:
     return VideoRepository(session)
+
+
+def get_search_index_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> SearchIndexRepository:
+    return SearchIndexRepository(session)
+
+
+def get_search_engine(
+    request: Request,
+    indexes: Annotated[SearchIndexRepository, Depends(get_search_index_repository)],
+    settings: Annotated[Settings, Depends(get_settings_dependency)],
+) -> FragmentSearchEngine:
+    if settings.search_engine == "mock":
+        return cast(FragmentSearchEngine, request.app.state.search_engine)
+    embedder = cast(QueryEmbedder, request.app.state.query_embedder)
+    return SemanticFragmentSearchEngine(
+        store=ReadySearchIndexStore(indexes),
+        query_embedder=embedder,
+        padding_seconds=settings.search_result_padding_seconds,
+    )
 
 
 def get_video_service(
@@ -58,12 +79,28 @@ def get_video_service(
     repository: Annotated[VideoRepository, Depends(get_video_repository)],
     storage: Annotated[LocalStorage, Depends(get_storage)],
     media_probe: Annotated[MediaProbe, Depends(get_media_probe)],
+    indexes: Annotated[SearchIndexRepository, Depends(get_search_index_repository)],
 ) -> VideoService:
     return VideoService(
         session=session,
         repository=repository,
         storage=storage,
         media_probe=media_probe,
+        search_indexes=indexes,
+    )
+
+
+def get_search_index_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    videos: Annotated[VideoRepository, Depends(get_video_repository)],
+    indexes: Annotated[SearchIndexRepository, Depends(get_search_index_repository)],
+    settings: Annotated[Settings, Depends(get_settings_dependency)],
+) -> SearchIndexService:
+    return SearchIndexService(
+        session=session,
+        videos=videos,
+        indexes=indexes,
+        enabled=settings.search_engine == "semantic",
     )
 
 

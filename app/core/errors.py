@@ -66,7 +66,26 @@ class VideoAudioTrackRequiredError(DomainError):
 
 class VideoTooShortError(DomainError):
     def __init__(self) -> None:
-        super().__init__("VIDEO_TOO_SHORT", "Video is too short for mock search", 422)
+        super().__init__("VIDEO_TOO_SHORT", "Video is shorter than the duration limit", 422)
+
+
+class SearchIndexNotReadyError(DomainError):
+    def __init__(self, status: str) -> None:
+        super().__init__(
+            "SEARCH_INDEX_NOT_READY",
+            "The semantic search index is not ready",
+            409,
+            details={"status": status},
+        )
+
+
+class SearchIndexFailedError(DomainError):
+    def __init__(self) -> None:
+        super().__init__(
+            "SEARCH_INDEX_FAILED",
+            "The semantic search index failed; request reindexing to retry",
+            409,
+        )
 
 
 class VideoTooLongError(DomainError):

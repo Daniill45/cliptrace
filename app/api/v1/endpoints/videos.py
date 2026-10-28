@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import (
     UploadFormData,
+    get_search_index_service,
     get_search_service,
     get_settings_dependency,
     get_storage,
@@ -20,9 +21,11 @@ from app.core.config import Settings
 from app.core.errors import RangeNotSatisfiableError
 from app.schemas.errors import ErrorResponse
 from app.schemas.search import SearchRequest, SearchResponse
+from app.schemas.search_indexes import SearchIndexStatusResponse
 from app.schemas.videos import VideoListResponse, VideoResponse, video_to_response
 from app.services.media.range_requests import InvalidByteRange, parse_byte_range
 from app.services.media.storage import LocalStorage
+from app.services.search.indexes import SearchIndexService, SearchIndexSnapshot
 from app.services.search.service import SearchService
 from app.services.videos import VideoService
 
@@ -242,6 +245,26 @@ async def search_video(
     return await service.search(video_id=video_id, query=payload.query, limit=payload.limit)
 
 
+@router.get("/{video_id}/search-index", response_model=SearchIndexStatusResponse)
+async def get_video_search_index(
+    video_id: UUID,
+    service: Annotated[SearchIndexService, Depends(get_search_index_service)],
+) -> SearchIndexStatusResponse:
+    return _search_index_to_response(await service.get(video_id))
+
+
+@router.post(
+    "/{video_id}/search-index/reindex",
+    response_model=SearchIndexStatusResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def reindex_video_search(
+    video_id: UUID,
+    service: Annotated[SearchIndexService, Depends(get_search_index_service)],
+) -> SearchIndexStatusResponse:
+    return _search_index_to_response(await service.reindex(video_id))
+
+
 @router.delete("/{video_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_video(
     video_id: UUID,
@@ -249,3 +272,21 @@ async def delete_video(
 ) -> Response:
     await service.delete(video_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _search_index_to_response(index: SearchIndexSnapshot) -> SearchIndexStatusResponse:
+    return SearchIndexStatusResponse(
+        video_id=index.video_id,
+        status=index.status.value,
+        attempts=index.attempts,
+        fragment_count=index.fragment_count,
+        pipeline_version=index.pipeline_version,
+        asr_model_version=index.asr_model_version,
+        embedding_model_version=index.embedding_model_version,
+        error_code=index.error_code,
+        error_message=index.error_message,
+        created_at=index.created_at,
+        updated_at=index.updated_at,
+        started_at=index.started_at,
+        indexed_at=index.indexed_at,
+    )

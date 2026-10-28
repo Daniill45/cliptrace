@@ -1,4 +1,4 @@
-.PHONY: check up down logs ps migrate test lint format typecheck
+.PHONY: check up down logs worker-logs ps migrate test lint format typecheck
 
 PODMAN ?= podman
 COMPOSE ?= $(PODMAN) compose
@@ -20,7 +20,10 @@ down:
 	$(COMPOSE) down
 
 logs:
-	$(COMPOSE) logs --follow api
+	$(COMPOSE) logs --follow api ml-worker
+
+worker-logs:
+	$(COMPOSE) logs --follow ml-worker
 
 ps:
 	$(COMPOSE) ps

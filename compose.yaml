@@ -1,14 +1,29 @@
 name: cliptrace
 
+x-database-image: &database-image
+  image: localhost/cliptrace-postgres:16.4-pgvector0.6.2
+  build:
+    context: .
+    dockerfile: Containerfile
+    target: database
+
+x-runtime-image: &runtime-image
+  image: localhost/cliptrace-runtime:dev
+  build:
+    context: .
+    dockerfile: Containerfile
+    target: runtime
+
 x-test-environment: &test-environment
   APP_ENV: test
   DATABASE_URL: postgresql+asyncpg://cliptrace:cliptrace@test-db:5432/cliptrace_test
   TEST_DATABASE_URL: postgresql+asyncpg://cliptrace:cliptrace@test-db:5432/cliptrace_test
   UPLOAD_DIR: /app/data/uploads
+  SEARCH_ENGINE: mock
 
 services:
   db:
-    image: docker.io/library/postgres:16.4-alpine
+    <<: *database-image
     environment:
       POSTGRES_DB: cliptrace
       POSTGRES_USER: cliptrace
@@ -22,7 +37,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   test-db:
-    image: docker.io/library/postgres:16.4-alpine
+    <<: *database-image
     profiles: ["tools"]
     environment:
       POSTGRES_DB: cliptrace_test
@@ -37,16 +52,14 @@ services:
       - test_postgres_data:/var/lib/postgresql/data
 
   migrate:
-    build:
-      context: .
-      dockerfile: Containerfile
-      target: runtime
+    <<: *runtime-image
     env_file:
       - .env
     environment: &app-environment
-      APP_ENV: development
       DATABASE_URL: postgresql+asyncpg://cliptrace:cliptrace@db:5432/cliptrace
       UPLOAD_DIR: /app/data/uploads
+      ML_MODEL_CACHE_DIR: /app/data/models
+      SEARCH_ENGINE: semantic
     command: ["alembic", "upgrade", "head"]
     depends_on:
       db:
@@ -54,10 +67,7 @@ services:
     restart: "no"
 
   api:
-    build:
-      context: .
-      dockerfile: Containerfile
-      target: runtime
+    <<: *runtime-image
     env_file:
       - .env
     environment: *app-environment
@@ -68,6 +78,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - uploads:/app/data/uploads
+      - model_cache:/app/data/models
     healthcheck:
       test:
         [
@@ -79,6 +90,21 @@ services:
       interval: 5s
       timeout: 4s
       retries: 20
+
+  ml-worker:
+    <<: *runtime-image
+    env_file:
+      - .env
+    environment: *app-environment
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - uploads:/app/data/uploads
+      - model_cache:/app/data/models
+    restart: unless-stopped
+    stop_grace_period: 30s
 
   test:
     build:
@@ -111,4 +137,5 @@ volumes:
   postgres_data:
   test_postgres_data:
   uploads:
+  model_cache:
   test_uploads:
