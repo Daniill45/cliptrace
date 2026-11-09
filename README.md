@@ -152,6 +152,21 @@ curl http://localhost:8000/api/v1/videos/<VIDEO_ID>
 curl http://localhost:8000/api/v1/videos/<VIDEO_ID>/content -o /dev/null
 ```
 
+### Offline evaluation retrieval
+
+Изменения embedding-модели и retrieval можно сравнивать на версионированном
+размеченном наборе через Recall@k, MRR@k и nDCG@k:
+
+```bash
+make eval-retrieval
+```
+
+Команда запускает тот же ONNX E5-adapter, что используется приложением, и печатает
+JSON-отчёт с агрегированными и per-query результатами. Встроенный
+`eval/retrieval_smoke.json` проверяет только evaluation pipeline и **не является
+оценкой качества продукта**. Формат разметки и правила интерпретации описаны в
+[документации offline evaluation](docs/retrieval-evaluation.md).
+
 ## Ручная браузерная проверка
 
 1. Откройте интерфейс, загрузите видео и выполните поиск.

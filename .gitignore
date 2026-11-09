@@ -9,6 +9,7 @@ __pycache__/
 htmlcov/
 data/uploads/*
 !data/uploads/.gitkeep
+data/models/
 *.part
 *.deleting
 .DS_Store
