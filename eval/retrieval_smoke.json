@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "name": "cliptrace-retrieval-smoke-v1",
+  "corpora": [
+    {
+      "id": "planning-meeting-ru",
+      "fragments": [
+        {
+          "id": "budget",
+          "text": "В следующем квартале нужно сократить расходы на инфраструктуру и пересмотреть облачные ресурсы."
+        },
+        {
+          "id": "hiring",
+          "text": "Команда планирует нанять двух backend-разработчиков после согласования вакансий."
+        },
+        {
+          "id": "release",
+          "text": "Новый релиз мобильного приложения запланирован на конец ноября."
+        }
+      ],
+      "queries": [
+        {
+          "id": "cost-reduction",
+          "text": "где обсуждают уменьшение затрат",
+          "relevance": {
+            "budget": 3
+          }
+        },
+        {
+          "id": "team-growth",
+          "text": "планы по расширению команды",
+          "relevance": {
+            "hiring": 3
+          }
+        }
+      ]
+    },
+    {
+      "id": "product-review-en",
+      "fragments": [
+        {
+          "id": "latency",
+          "text": "Search latency increased after the latest index refresh and needs profiling."
+        },
+        {
+          "id": "feedback",
+          "text": "Customer interviews show that users want clearer onboarding instructions."
+        },
+        {
+          "id": "pricing",
+          "text": "The pricing experiment will run for two weeks before the final decision."
+        }
+      ],
+      "queries": [
+        {
+          "id": "slow-search",
+          "text": "where they discuss slow retrieval",
+          "relevance": {
+            "latency": 3
+          }
+        },
+        {
+          "id": "onboarding-request",
+          "text": "what users asked to improve during interviews",
+          "relevance": {
+            "feedback": 3
+          }
+        }
+      ]
+    }
+  ]
+}

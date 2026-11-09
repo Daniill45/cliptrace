@@ -1,9 +1,11 @@
-.PHONY: check up down logs worker-logs ps migrate test lint format typecheck
+.PHONY: check up down logs worker-logs ps migrate test lint format typecheck eval-retrieval
 
 PODMAN ?= podman
 COMPOSE ?= $(PODMAN) compose
 PODMAN_COMPOSE_CONFIG ?= $(CURDIR)/.podman
 TEST_COMPOSE ?= $(COMPOSE) --profile tools
+EVAL_DATASET ?= eval/retrieval_smoke.json
+EVAL_CUTOFFS ?= --k 1 --k 3 --k 5
 export DOCKER_CONFIG := $(PODMAN_COMPOSE_CONFIG)
 
 check:
@@ -43,3 +45,6 @@ format:
 
 typecheck:
 	$(COMPOSE) --profile tools run --rm --no-deps --build test mypy app
+
+eval-retrieval:
+	uv run cliptrace-eval --dataset $(EVAL_DATASET) --model-cache-dir data/models $(EVAL_CUTOFFS)
