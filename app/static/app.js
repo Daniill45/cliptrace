@@ -467,7 +467,7 @@ function renderSearchResults(results) {
     if (score) {
       const scoreLabel = document.createElement("span");
       scoreLabel.className = "result-score";
-      scoreLabel.textContent = `Cosine score ${score}`;
+      scoreLabel.textContent = `Релевантность ${score}`;
       meta.append(scoreLabel);
     }
     const transcript = document.createElement("p");

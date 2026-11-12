@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
@@ -44,7 +45,6 @@ class Settings(BaseSettings):
     search_result_padding_seconds: float = 1.0
     search_engine: Literal["mock", "semantic"] = "mock"
 
-    ml_pipeline_version: str = "speech-e5-v1"
     ml_worker_poll_seconds: float = 2.0
     ml_worker_lease_seconds: int = 900
     ml_worker_max_attempts: int = 3
@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     embedding_model_revision: str = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
     embedding_device: Literal["cpu"] = "cpu"
     embedding_batch_size: int = 32
+
+    hybrid_dense_candidate_limit: int = 40
+    hybrid_lexical_candidate_limit: int = 40
+    hybrid_rerank_candidate_limit: int = 30
+    hybrid_rrf_k: float = 60.0
+    hybrid_temporal_iou_threshold: float = 0.5
+
+    reranker_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+    reranker_model_revision: str = "1427fd652930e4ba29e8149678df786c240d8825"
+    reranker_device: Literal["cpu"] = "cpu"
+    reranker_onnx_file: str = "auto"
+    reranker_batch_size: int = 8
 
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
@@ -114,8 +126,17 @@ class Settings(BaseSettings):
             "ML_WORKER_LEASE_SECONDS": self.ml_worker_lease_seconds,
             "ML_WORKER_MAX_ATTEMPTS": self.ml_worker_max_attempts,
             "EMBEDDING_BATCH_SIZE": self.embedding_batch_size,
+            "HYBRID_DENSE_CANDIDATE_LIMIT": self.hybrid_dense_candidate_limit,
+            "HYBRID_LEXICAL_CANDIDATE_LIMIT": self.hybrid_lexical_candidate_limit,
+            "HYBRID_RERANK_CANDIDATE_LIMIT": self.hybrid_rerank_candidate_limit,
+            "HYBRID_RRF_K": self.hybrid_rrf_k,
+            "RERANKER_BATCH_SIZE": self.reranker_batch_size,
         }
-        invalid = [name for name, value in positive_values.items() if value <= 0]
+        invalid = [
+            name
+            for name, value in positive_values.items()
+            if not math.isfinite(value) or value <= 0
+        ]
         if invalid:
             raise ValueError(f"Settings must be positive: {', '.join(invalid)}")
         if self.upload_chunk_size_bytes > self.max_upload_size_bytes:
@@ -130,8 +151,16 @@ class Settings(BaseSettings):
             raise ValueError("MOCK_RESULT_DURATION_SECONDS must be positive")
         if self.min_fragment_duration_seconds <= 0:
             raise ValueError("MIN_FRAGMENT_DURATION_SECONDS must be positive")
-        if self.search_result_padding_seconds < 0:
+        if (
+            not math.isfinite(self.search_result_padding_seconds)
+            or self.search_result_padding_seconds < 0
+        ):
             raise ValueError("SEARCH_RESULT_PADDING_SECONDS must be non-negative")
+        if (
+            not math.isfinite(self.hybrid_temporal_iou_threshold)
+            or not 0 < self.hybrid_temporal_iou_threshold <= 1
+        ):
+            raise ValueError("HYBRID_TEMPORAL_IOU_THRESHOLD must be in (0, 1]")
         if self.mock_result_duration_seconds < self.min_fragment_duration_seconds:
             raise ValueError(
                 "MOCK_RESULT_DURATION_SECONDS must be at least MIN_FRAGMENT_DURATION_SECONDS"

@@ -19,6 +19,7 @@ from app.db.models.search import SearchIndexStatus
 from app.db.models.video import VideoStatus
 from app.repositories.search import FragmentMatch, SearchIndexRepository
 from app.repositories.videos import VideoRepository
+from app.services.search.hybrid import RetrievedFragmentCandidates
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,3 +144,24 @@ class ReadySearchIndexStore:
         if index.status is not SearchIndexStatus.READY:
             raise SearchIndexNotReadyError(index.status.value)
         return await self._repository.search(video_id, query_embedding, limit)
+
+    async def retrieve(
+        self,
+        *,
+        video_id: UUID,
+        query_text: str,
+        query_embedding: Sequence[float],
+        dense_limit: int,
+        lexical_limit: int,
+    ) -> RetrievedFragmentCandidates:
+        """Check one index generation, then retrieve both channels sequentially."""
+        index = await self._repository.get_for_search(video_id)
+        if index is None:
+            raise SearchIndexNotReadyError(SearchIndexStatus.PENDING.value)
+        if index.status is SearchIndexStatus.FAILED:
+            raise SearchIndexFailedError
+        if index.status is not SearchIndexStatus.READY:
+            raise SearchIndexNotReadyError(index.status.value)
+        dense = await self._repository.search_dense(video_id, query_embedding, dense_limit)
+        lexical = await self._repository.search_lexical(video_id, query_text, lexical_limit)
+        return RetrievedFragmentCandidates(dense=tuple(dense), lexical=tuple(lexical))

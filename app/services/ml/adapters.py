@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import platform
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from importlib import import_module
@@ -47,7 +48,7 @@ class _Tokenizer(Protocol):
         pad_token: str,
     ) -> None: ...
 
-    def encode_batch(self, inputs: Sequence[str]) -> list[_TokenEncoding]: ...
+    def encode_batch(self, inputs: Sequence[str | tuple[str, str]]) -> list[_TokenEncoding]: ...
 
 
 class _OnnxInput(Protocol):
@@ -73,6 +74,13 @@ class _NumpyModule(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _E5Runtime:
+    tokenizer: _Tokenizer
+    session: _OnnxSession
+    numpy: _NumpyModule
+
+
+@dataclass(frozen=True, slots=True)
+class _CrossEncoderRuntime:
     tokenizer: _Tokenizer
     session: _OnnxSession
     numpy: _NumpyModule
@@ -368,6 +376,155 @@ class OnnxE5Embedder:
         return self._runtime
 
 
+class OnnxCrossEncoderReranker:
+    """Rerank a small candidate set with a multilingual CPU-only cross-encoder."""
+
+    _TOKENIZER_FILES = (
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "sentencepiece.bpe.model",
+    )
+
+    def __init__(
+        self,
+        *,
+        model_name: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+        revision: str | None = None,
+        device: str = "cpu",
+        onnx_file: str = "auto",
+        max_length: int = 384,
+        cache_folder: Path | None = None,
+        batch_size: int = 8,
+    ) -> None:
+        if not model_name.strip():
+            raise ValueError("Reranker model name must not be blank")
+        if device != "cpu":
+            raise ValueError("The ONNX reranker currently supports only the CPU device")
+        if max_length <= 0:
+            raise ValueError("Reranker tokenizer maximum length must be positive")
+        if batch_size <= 0:
+            raise ValueError("Reranker batch size must be positive")
+        self._model_name = model_name
+        self._revision = revision
+        self._onnx_file = _resolve_reranker_onnx_file(onnx_file)
+        self._max_length = max_length
+        self._cache_folder = cache_folder
+        self._batch_size = batch_size
+        self._runtime: _CrossEncoderRuntime | None = None
+        self._runtime_lock = Lock()
+
+    @property
+    def model_id(self) -> str:
+        revision = self._revision or "main"
+        return f"onnx/{self._model_name}@{revision}:{Path(self._onnx_file).name}"
+
+    async def score(self, query: str, documents: Sequence[str]) -> Sequence[float]:
+        normalized_query = _require_text(query)
+        if not documents:
+            return ()
+        normalized_documents = tuple(_require_text(document) for document in documents)
+        return await anyio.to_thread.run_sync(
+            self._score_sync,
+            normalized_query,
+            normalized_documents,
+            abandon_on_cancel=True,
+        )
+
+    def _score_sync(self, query: str, documents: Sequence[str]) -> tuple[float, ...]:
+        scores: list[float] = []
+        for start in range(0, len(documents), self._batch_size):
+            scores.extend(
+                self._score_batch_sync(query, documents[start : start + self._batch_size])
+            )
+        return tuple(scores)
+
+    def _score_batch_sync(self, query: str, documents: Sequence[str]) -> tuple[float, ...]:
+        runtime = self._get_runtime()
+        pairs = tuple((query, document) for document in documents)
+        encodings = runtime.tokenizer.encode_batch(pairs)
+        if len(encodings) != len(documents):
+            raise ValueError("Reranker tokenizer returned an unexpected batch size")
+        input_names = {input_value.name for input_value in runtime.session.get_inputs()}
+        unknown_inputs = input_names - {"input_ids", "attention_mask", "token_type_ids"}
+        if unknown_inputs:
+            names = ", ".join(sorted(unknown_inputs))
+            raise RuntimeError(f"Unsupported reranker ONNX inputs: {names}")
+        input_feed: dict[str, object] = {
+            "input_ids": runtime.numpy.array(
+                [encoding.ids for encoding in encodings],
+                dtype=runtime.numpy.int64,
+            ),
+            "attention_mask": runtime.numpy.array(
+                [encoding.attention_mask for encoding in encodings],
+                dtype=runtime.numpy.int64,
+            ),
+        }
+        if "token_type_ids" in input_names:
+            input_feed["token_type_ids"] = runtime.numpy.array(
+                [encoding.type_ids for encoding in encodings],
+                dtype=runtime.numpy.int64,
+            )
+        outputs = runtime.session.run(None, input_feed)
+        if not outputs:
+            raise ValueError("Reranker ONNX model returned no outputs")
+        return _extract_reranker_logits(outputs[0], expected_count=len(documents))
+
+    def _get_runtime(self) -> _CrossEncoderRuntime:
+        if self._runtime is not None:
+            return self._runtime
+        with self._runtime_lock:
+            if self._runtime is None:
+                try:
+                    hub_module = import_module("huggingface_hub")
+                    tokenizers_module = import_module("tokenizers")
+                    onnx_module = import_module("onnxruntime")
+                    numpy_module = import_module("numpy")
+                except ModuleNotFoundError as exc:
+                    raise RuntimeError(
+                        "huggingface-hub, tokenizers, onnxruntime, and numpy are required "
+                        "for reranking"
+                    ) from exc
+                snapshot_download = cast(Callable[..., str], hub_module.snapshot_download)
+                snapshot_kwargs: dict[str, object] = {
+                    "repo_id": self._model_name,
+                    "allow_patterns": (*self._TOKENIZER_FILES, self._onnx_file),
+                }
+                if self._revision is not None:
+                    snapshot_kwargs["revision"] = self._revision
+                if self._cache_folder is not None:
+                    snapshot_kwargs["cache_dir"] = str(self._cache_folder)
+                snapshot_root = Path(snapshot_download(**snapshot_kwargs))
+
+                from_file_value: object = tokenizers_module.Tokenizer.from_file
+                from_file = cast(Callable[[str], object], from_file_value)
+                tokenizer = cast(_Tokenizer, from_file(str(snapshot_root / "tokenizer.json")))
+                tokenizer.enable_truncation(self._max_length)
+                pad_token, pad_id = _resolve_pad_token(tokenizer)
+                tokenizer.enable_padding(
+                    direction="right",
+                    pad_id=pad_id,
+                    pad_token=pad_token,
+                )
+
+                session_factory = cast(Callable[..., object], onnx_module.InferenceSession)
+                session = cast(
+                    _OnnxSession,
+                    session_factory(
+                        str(snapshot_root / self._onnx_file),
+                        providers=["CPUExecutionProvider"],
+                    ),
+                )
+                self._runtime = _CrossEncoderRuntime(
+                    tokenizer=tokenizer,
+                    session=session,
+                    numpy=cast(_NumpyModule, numpy_module),
+                )
+        if self._runtime is None:
+            raise RuntimeError("Failed to initialize reranker runtime")
+        return self._runtime
+
+
 def _read_transcript_segment(value: object, text_attribute: str) -> TranscriptSegment | None:
     start = _read_optional_float(value, "start")
     end = _read_optional_float(value, "end")
@@ -398,6 +555,43 @@ def _require_text(text: str) -> str:
     if not normalized:
         raise ValueError("Text to embed must not be blank")
     return normalized
+
+
+def _resolve_reranker_onnx_file(value: str) -> str:
+    normalized = value.strip()
+    if normalized == "auto":
+        machine = platform.machine().lower()
+        if machine in {"arm64", "aarch64"}:
+            return "onnx/model_qint8_arm64.onnx"
+        return "onnx/model.onnx"
+    candidate = Path(normalized)
+    if (
+        candidate.is_absolute()
+        or candidate.suffix != ".onnx"
+        or len(candidate.parts) != 2
+        or candidate.parts[0] != "onnx"
+        or ".." in candidate.parts
+    ):
+        raise ValueError("Reranker ONNX file must be a repository path under onnx/")
+    return candidate.as_posix()
+
+
+def _extract_reranker_logits(raw_output: object, *, expected_count: int) -> tuple[float, ...]:
+    rows = _to_plain_sequence(raw_output)
+    if len(rows) != expected_count:
+        raise ValueError("Reranker output batch size does not match the tokenizer output")
+    scores: list[float] = []
+    for row in rows:
+        if isinstance(row, bool):
+            raise ValueError("Reranker returned a non-numeric score")
+        if isinstance(row, int | float):
+            scores.append(_require_finite_number(row))
+            continue
+        values = _to_plain_sequence(row)
+        if len(values) != 1:
+            raise ValueError("Reranker must return exactly one score per query-document pair")
+        scores.append(_require_finite_number(values[0]))
+    return tuple(scores)
 
 
 def _to_plain_sequence(value: object) -> Sequence[object]:

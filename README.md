@@ -1,14 +1,16 @@
 # ClipTrace MVP
 
 ClipTrace загружает MP4, расшифровывает речь локальной ASR-моделью и находит
-релевантные отрывки по смыслу текстового запроса. Результат содержит таймкоды,
-фрагмент расшифровки и cosine score; исходное видео воспроизводится через HTTP Range.
+релевантные отрывки по смыслу и точным словам текстового запроса. Результат содержит
+таймкоды, фрагмент расшифровки и ranking score; исходное видео воспроизводится через
+HTTP Range.
 
 ML-контур работает локально и не отправляет видео во внешний API:
 
 ```text
-MP4 → faster-whisper → временные окна → multilingual-e5-small (ONNX)
-    → PostgreSQL/pgvector → top-k отрывков → HTML5-плеер
+MP4 → faster-whisper → semantic chunks → multilingual-e5-small (ONNX)
+query → dense retrieval + PostgreSQL FTS → RRF → multilingual cross-encoder (ONNX)
+      → temporal NMS → top-k отрывков → HTML5-плеер
 ```
 
 ## Быстрый запуск
@@ -58,8 +60,9 @@ make down
 Общие логи доступны через `make logs`, только ML-worker — через `make worker-logs`,
 состояние контейнеров — через `make ps`.
 
-При первой индексации worker скачает модели в named volume `model_cache`. Ревизии
-E5 и faster-whisper зафиксированы SHA, а размер Whisper задаётся alias `small`.
+При первой индексации worker скачает модели в named volume `model_cache`; первый
+semantic-поиск дополнительно скачает quantized cross-encoder. Ревизии E5,
+cross-encoder и faster-whisper зафиксированы SHA, а размер Whisper задаётся alias `small`.
 На Apple Silicon внутри Podman используется ARM64 CPU; Metal/MPS контейнеру не
 требуется. Скорость первой обработки зависит от длины видео и ресурсов Podman machine.
 Для полного удаления локальных данных явно выполните `podman compose down -v`.
@@ -122,8 +125,9 @@ curl -i -X DELETE http://localhost:8000/api/v1/videos/<VIDEO_ID>
 ```
 
 До готовности индекса search возвращает `409 SEARCH_INDEX_NOT_READY`. После обработки
-ответ имеет `mode="semantic-transcript"` и содержит до запрошенного `limit` результатов
-в порядке модельной релевантности. `score` — ranking score, а не вероятность.
+ответ имеет `mode="hybrid-transcript"` и содержит до запрошенного `limit` результатов
+в порядке cross-encoder-релевантности. `score` — sigmoid-нормализованный ranking score,
+а не откалиброванная вероятность.
 
 ## Проверки
 
@@ -154,8 +158,8 @@ curl http://localhost:8000/api/v1/videos/<VIDEO_ID>/content -o /dev/null
 
 ### Offline evaluation retrieval
 
-Изменения embedding-модели и retrieval можно сравнивать на версионированном
-размеченном наборе через Recall@k, MRR@k и nDCG@k:
+Dense E5 baseline можно проверять на версионированном размеченном наборе через
+Recall@k, MRR@k и nDCG@k:
 
 ```bash
 make eval-retrieval
@@ -165,7 +169,9 @@ make eval-retrieval
 JSON-отчёт с агрегированными и per-query результатами. Встроенный
 `eval/retrieval_smoke.json` проверяет только evaluation pipeline и **не является
 оценкой качества продукта**. Формат разметки и правила интерпретации описаны в
-[документации offline evaluation](docs/retrieval-evaluation.md).
+[документации offline evaluation](docs/retrieval-evaluation.md). Текущая команда не
+оценивает PostgreSQL FTS, RRF, cross-encoder, temporal NMS или новые границы chunks;
+для end-to-end сравнения нужны пересобранные кандидаты и temporal qrels.
 
 ## Ручная браузерная проверка
 
@@ -190,6 +196,12 @@ Backend отдаёт исходное видео с HTTP byte ranges. Огран
 - `WHISPER_LANGUAGE` — необязательная фиксация языка; пустое значение включает auto-detect;
 - `EMBEDDING_MODEL=intfloat/multilingual-e5-small` — 384-мерные embeddings;
 - `EMBEDDING_MODEL_REVISION` фиксирует конкретную ревизию ONNX-модели;
+- `RERANKER_MODEL=cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` — локальный
+  multilingual reranker; `RERANKER_ONNX_FILE=auto` выбирает quantized ARM64
+  артефакт на Apple Silicon и portable FP32 на остальных CPU;
+- `HYBRID_*_CANDIDATE_LIMIT`, `HYBRID_RRF_K` и
+  `HYBRID_TEMPORAL_IOU_THRESHOLD` задают candidate pool, fusion и удаление
+  перекрывающихся результатов;
 - `ML_WORKER_LEASE_SECONDS` и `ML_WORKER_MAX_ATTEMPTS` управляют безопасным захватом job;
 - `SEARCH_ENGINE=mock` можно использовать при прямом запуске для изолированной отладки.
 
@@ -217,12 +229,14 @@ host URL с контейнерным host `db`.
   безопасным `stat/open` и потоковой выдачей.
 - `MediaProbe` запускает фиксированный argv `ffprobe` без shell, ограничивает время и
   объём вывода и нормализует только необходимые поля.
-- `SearchService` зависит от `FragmentSearchEngine`; semantic-реализация кодирует
-  запрос E5-моделью и выполняет exact cosine search внутри одного `video_id`.
+- `SearchService` зависит от `FragmentSearchEngine`; hybrid-реализация объединяет
+  exact cosine search E5 и PostgreSQL FTS через RRF, пересортировывает короткий пул
+  cross-encoder-моделью и удаляет дубли по temporal IoU.
 - `TranscriptIndexWorker` забирает jobs через `FOR UPDATE SKIP LOCKED`, обновляет lease
   heartbeat-ом и атомарно заменяет фрагменты только после успешной индексации.
 - `video_search_indexes` хранит независимый от media status жизненный цикл индекса;
-  `video_fragments` — таймкоды, transcript, язык и `vector(384)`.
+  `video_fragments` — таймкоды, transcript, язык и `vector(384)`; функциональный
+  GIN-индекс по transcript обслуживает lexical retrieval.
 - OCI-образ собирается Podman из `Containerfile`; сервисы описаны стандартным
   Compose-файлом `compose.yaml`.
 
@@ -240,7 +254,8 @@ Readiness обращается к таблице `videos`, проверяет з
 транскодирования, дедупликации, авторизации и object storage. Текущая модель ищет по
 произнесённой речи: чисто визуальный момент, о котором никто не говорит, она не найдёт.
 Порог «ничего не найдено» пока не калиброван на продуктовом eval-наборе, поэтому
-dense retrieval может вернуть слабосвязанный top result.
+hybrid retrieval может вернуть слабосвязанный top result. RRF, temporal IoU и размер
+candidate pool — стартовые эвристики; функциональные тесты не доказывают quality uplift.
 
 Текущий MVP не имеет authentication и предназначен для локальной разработки или
 закрытого demo-окружения. Перед публичным развёртыванием обязательны аутентификация,
