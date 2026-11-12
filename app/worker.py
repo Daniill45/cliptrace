@@ -20,7 +20,7 @@ from app.repositories.search import SearchIndexLeaseLostError, SearchIndexReposi
 from app.repositories.videos import VideoRepository
 from app.services.media.storage import LocalStorage
 from app.services.ml.adapters import FasterWhisperTranscriber, OnnxE5Embedder
-from app.services.ml.chunking import TranscriptChunker
+from app.services.ml.chunking import SemanticTranscriptChunker
 from app.services.ml.contracts import IndexedFragment
 from app.services.ml.indexing import TranscriptIndexingService
 from app.services.search.base import VideoDescriptor
@@ -112,7 +112,7 @@ class TranscriptIndexWorker:
                             video_id,
                             worker_id=self._worker_id,
                             fragments=fragments,
-                            pipeline_version=self._settings.ml_pipeline_version,
+                            pipeline_version=self._pipeline.pipeline_version,
                             asr_model_version=self._pipeline.transcriber_model_id,
                             embedding_model_version=self._pipeline.embedding_model_id,
                         )
@@ -291,7 +291,7 @@ async def _run() -> None:
     pipeline = TranscriptIndexingService(
         transcriber=transcriber,
         embedder=embedder,
-        chunker=TranscriptChunker(),
+        chunker=SemanticTranscriptChunker(),
     )
     worker = TranscriptIndexWorker(
         session_factory=session_factory,

@@ -171,6 +171,8 @@ class FakeStorage:
 class FakePipeline:
     transcriber_model_id = "fake-asr-v1"
     embedding_model_id = "fake-embedding-v1"
+    chunker_version = "fake-chunker-v1"
+    pipeline_version = "test-pipeline-v1/fake-chunker-v1"
 
     def __init__(
         self,
@@ -237,7 +239,6 @@ def build_worker(
     )
     settings = Settings(
         _env_file=None,
-        ml_pipeline_version="test-pipeline-v1",
         ml_worker_lease_seconds=3,
     )
     worker = TranscriptIndexWorker(
@@ -299,7 +300,7 @@ async def test_successful_job_completes_and_stops_heartbeat(
             video_id=harness.repository.claim.video_id,
             worker_id="test-worker",
             fragments=harness.pipeline.fragments,
-            pipeline_version="test-pipeline-v1",
+            pipeline_version="test-pipeline-v1/fake-chunker-v1",
             asr_model_version="fake-asr-v1",
             embedding_model_version="fake-embedding-v1",
         )
