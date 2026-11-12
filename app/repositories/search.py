@@ -6,11 +6,12 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import bindparam, delete, func, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.search import (
@@ -338,6 +339,15 @@ class SearchIndexRepository:
         query_embedding: Sequence[float],
         limit: int,
     ) -> Sequence[FragmentMatch]:
+        """Compatibility alias for the dense retrieval channel."""
+        return await self.search_dense(video_id, query_embedding, limit)
+
+    async def search_dense(
+        self,
+        video_id: UUID,
+        query_embedding: Sequence[float],
+        limit: int,
+    ) -> Sequence[FragmentMatch]:
         """Run exact cosine search over fragments belonging to one video."""
         if limit <= 0:
             raise ValueError("limit must be positive")
@@ -357,19 +367,58 @@ class SearchIndexRepository:
                 .limit(limit)
             )
         ).all()
-        return [
-            FragmentMatch(
-                fragment_id=fragment.id,
-                video_id=fragment.video_id,
-                position=fragment.position,
-                start_seconds=fragment.start_seconds,
-                end_seconds=fragment.end_seconds,
-                transcript=fragment.transcript,
-                language=fragment.language,
-                score=float(similarity),
+        return self._to_fragment_matches(rows)
+
+    async def search_lexical(
+        self,
+        video_id: UUID,
+        query_text: str,
+        limit: int,
+    ) -> Sequence[FragmentMatch]:
+        """Run multilingual exact-term retrieval with PostgreSQL full-text search."""
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        normalized_query = " ".join(query_text.split())
+        if not normalized_query:
+            raise ValueError("query_text must not be blank")
+        regconfig: Any = literal_column("'simple'::regconfig")
+        document = func.to_tsvector(regconfig, VideoFragment.transcript)
+        tsquery = func.websearch_to_tsquery(regconfig, bindparam("query_text"))
+        score = func.ts_rank_cd(document, tsquery).label("score")
+        statement = (
+            select(VideoFragment, score)
+            .join(
+                VideoSearchIndex,
+                VideoSearchIndex.video_id == VideoFragment.video_id,
             )
-            for fragment, similarity in rows
-        ]
+            .where(VideoFragment.video_id == video_id)
+            .where(VideoSearchIndex.status == SearchIndexStatus.READY)
+            .where(document.op("@@")(tsquery))
+            .order_by(score.desc(), VideoFragment.position.asc())
+            .limit(limit)
+        )
+        rows = (await self._session.execute(statement, {"query_text": normalized_query})).all()
+        return self._to_fragment_matches(rows)
+
+    @staticmethod
+    def _to_fragment_matches(
+        rows: Sequence[Row[tuple[VideoFragment, Any]]],
+    ) -> list[FragmentMatch]:
+        matches: list[FragmentMatch] = []
+        for fragment, raw_score in rows:
+            matches.append(
+                FragmentMatch(
+                    fragment_id=fragment.id,
+                    video_id=fragment.video_id,
+                    position=fragment.position,
+                    start_seconds=fragment.start_seconds,
+                    end_seconds=fragment.end_seconds,
+                    transcript=fragment.transcript,
+                    language=fragment.language,
+                    score=float(raw_score),
+                )
+            )
+        return matches
 
     async def _get_required(
         self, video_id: UUID, *, populate_existing: bool = False

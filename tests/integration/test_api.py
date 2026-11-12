@@ -462,11 +462,20 @@ async def test_integration_database_is_isolated_and_migrated(
                     await connection.execute(text("SELECT version_num FROM alembic_version"))
                 ).scalars()
             )
+            fts_index_count = await connection.scalar(
+                text(
+                    "SELECT count(*) FROM pg_indexes "
+                    "WHERE schemaname = current_schema() "
+                    "AND tablename = 'video_fragments' "
+                    "AND indexname = 'ix_video_fragments_transcript_fts'"
+                )
+            )
     finally:
         await engine.dispose()
 
     assert database_name == EXPECTED_TEST_DATABASE
     assert applied_revisions == expected_heads
+    assert fts_index_count == 1
 
 
 class _FakeSemanticEmbedder:
@@ -481,6 +490,14 @@ class _FakeSemanticEmbedder:
         raise AssertionError(f"online API must not index documents: {texts!r}")
 
 
+class _FakeReranker:
+    model_id = "fake-cross-encoder-integration-v1"
+
+    async def score(self, query: str, documents: Sequence[str]) -> Sequence[float]:
+        assert query == "первый сюжет"
+        return tuple(3.0 if document == "первый сюжет" else 1.0 for document in documents)
+
+
 @pytest.mark.asyncio
 async def test_semantic_index_lifecycle_and_exact_pgvector_search(
     settings: Settings,
@@ -491,6 +508,7 @@ async def test_semantic_index_lifecycle_and_exact_pgvector_search(
     semantic_settings = settings.model_copy(update={"search_engine": "semantic"})
     application = create_app(semantic_settings)
     application.state.query_embedder = _FakeSemanticEmbedder()
+    application.state.reranker = _FakeReranker()
 
     async with application.router.lifespan_context(application):
         transport = httpx.ASGITransport(app=application, raise_app_exceptions=False)
@@ -563,12 +581,12 @@ async def test_semantic_index_lifecycle_and_exact_pgvector_search(
             )
             assert searched.status_code == 200, searched.text
             payload = searched.json()
-            assert payload["mode"] == "semantic-transcript"
+            assert payload["mode"] == "hybrid-transcript"
             assert [item["preview_text"] for item in payload["results"]] == [
                 "первый сюжет",
                 "второй сюжет",
             ]
-            assert payload["results"][0]["score"] == pytest.approx(1.0)
+            assert payload["results"][0]["score"] == pytest.approx(0.9525741268)
             assert payload["results"][0]["start_seconds"] == 1.0
             assert payload["results"][0]["end_seconds"] == 5.0
 

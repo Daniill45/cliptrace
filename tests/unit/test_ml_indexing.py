@@ -68,7 +68,7 @@ async def test_indexing_service_runs_pipeline_and_returns_ordered_payloads(
 
     assert transcriber.paths == [media_path]
     assert embedder.document_batches == [("first second", "second third")]
-    assert service.version == "fake-asr-v1+fake-embedding-v1"
+    assert service.version == "fake-asr-v1+fake-embedding-v1+fixed-window-v1"
     assert [fragment.position for fragment in fragments] == [0, 1]
     assert [(fragment.start_seconds, fragment.end_seconds) for fragment in fragments] == [
         (0.0, 12.0),

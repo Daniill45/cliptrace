@@ -16,10 +16,10 @@ from app.repositories.search import SearchIndexRepository
 from app.repositories.videos import VideoRepository
 from app.services.media.probe import MediaProbe
 from app.services.media.storage import LocalStorage
-from app.services.ml.contracts import QueryEmbedder
+from app.services.ml.contracts import CandidateReranker, QueryEmbedder
 from app.services.search.base import FragmentSearchEngine
+from app.services.search.hybrid import HybridFragmentSearchEngine
 from app.services.search.indexes import ReadySearchIndexStore, SearchIndexService
-from app.services.search.semantic import SemanticFragmentSearchEngine
 from app.services.search.service import SearchService
 from app.services.videos import VideoService
 
@@ -67,9 +67,16 @@ def get_search_engine(
     if settings.search_engine == "mock":
         return cast(FragmentSearchEngine, request.app.state.search_engine)
     embedder = cast(QueryEmbedder, request.app.state.query_embedder)
-    return SemanticFragmentSearchEngine(
+    reranker = cast(CandidateReranker, request.app.state.reranker)
+    return HybridFragmentSearchEngine(
         store=ReadySearchIndexStore(indexes),
         query_embedder=embedder,
+        reranker=reranker,
+        dense_candidate_limit=settings.hybrid_dense_candidate_limit,
+        lexical_candidate_limit=settings.hybrid_lexical_candidate_limit,
+        rerank_candidate_limit=settings.hybrid_rerank_candidate_limit,
+        rrf_k=settings.hybrid_rrf_k,
+        temporal_iou_threshold=settings.hybrid_temporal_iou_threshold,
         padding_seconds=settings.search_result_padding_seconds,
     )
 

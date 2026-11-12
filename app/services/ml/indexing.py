@@ -6,20 +6,26 @@ import math
 from collections.abc import Sequence
 from pathlib import Path
 
-from app.services.ml.chunking import TranscriptChunker
-from app.services.ml.contracts import IndexedFragment, SpeechTranscriber, TextEmbedder
+from app.services.ml.contracts import (
+    IndexedFragment,
+    SpeechTranscriber,
+    TextEmbedder,
+    TranscriptChunkingStrategy,
+)
 from app.services.search.base import VideoDescriptor
 
 
 class TranscriptIndexingService:
     """Transcribe one verified video and produce persistence-ready fragments."""
 
+    _PIPELINE_FAMILY = "speech-hybrid-v2"
+
     def __init__(
         self,
         *,
         transcriber: SpeechTranscriber,
         embedder: TextEmbedder,
-        chunker: TranscriptChunker,
+        chunker: TranscriptChunkingStrategy,
     ) -> None:
         self._transcriber = transcriber
         self._embedder = embedder
@@ -27,7 +33,7 @@ class TranscriptIndexingService:
 
     @property
     def version(self) -> str:
-        return f"{self._transcriber.model_id}+{self._embedder.model_id}"
+        return f"{self._transcriber.model_id}+{self._embedder.model_id}+{self._chunker.version}"
 
     @property
     def transcriber_model_id(self) -> str:
@@ -36,6 +42,14 @@ class TranscriptIndexingService:
     @property
     def embedding_model_id(self) -> str:
         return self._embedder.model_id
+
+    @property
+    def chunker_version(self) -> str:
+        return self._chunker.version
+
+    @property
+    def pipeline_version(self) -> str:
+        return f"{self._PIPELINE_FAMILY}/{self._chunker.version}"
 
     async def index(
         self,

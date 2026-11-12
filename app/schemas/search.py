@@ -27,7 +27,9 @@ class SearchResult(BaseModel):
     end_seconds: float
     start_timecode: str
     end_timecode: str
-    score: float | None
+    score: float | None = Field(
+        description="Normalized ranking score; useful for ordering, not a calibrated probability"
+    )
     preview_text: str | None
     content_url: str
 

@@ -10,6 +10,9 @@ def test_default_mock_invariants() -> None:
     assert settings.mock_result_duration_seconds == 5.0
     assert settings.min_fragment_duration_seconds == 5.0
     assert settings.min_video_duration_seconds == 1.0
+    assert settings.hybrid_rrf_k == 60.0
+    assert settings.hybrid_temporal_iou_threshold == 0.5
+    assert settings.reranker_onnx_file == "auto"
 
 
 @pytest.mark.parametrize(
@@ -29,6 +32,13 @@ def test_default_mock_invariants() -> None:
         },
         {"cors_origins": ["http://localhost:3000/path"]},
         {"app_env": "production", "cors_origins": ["*"]},
+        {"hybrid_dense_candidate_limit": 0},
+        {"hybrid_lexical_candidate_limit": 0},
+        {"hybrid_rerank_candidate_limit": 0},
+        {"hybrid_rrf_k": float("nan")},
+        {"hybrid_temporal_iou_threshold": 0},
+        {"hybrid_temporal_iou_threshold": 1.01},
+        {"reranker_batch_size": 0},
     ],
 )
 def test_invalid_settings_fail_fast(override: dict[str, object]) -> None:

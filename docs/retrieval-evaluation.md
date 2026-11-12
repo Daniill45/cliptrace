@@ -1,9 +1,15 @@
 # Offline evaluation семантического поиска
 
-ClipTrace может отдельно оценивать retrieval-часть ML-пайплайна: E5 кодирует
+ClipTrace может отдельно оценивать dense E5 baseline: E5 кодирует
 запросы и заранее размеченные фрагменты, после чего evaluator сравнивает порядок
 результатов с relevance-разметкой. Видео, PostgreSQL и Faster Whisper для этого
 не нужны — проверяется именно качество поиска по готовому тексту.
+
+Этот evaluator не запускает production hybrid-цепочку PostgreSQL FTS → RRF →
+cross-encoder → temporal NMS. Поэтому его метрики нельзя выдавать за end-to-end
+качество текущего поиска. После изменения chunk boundaries fragment-ID qrels также
+нельзя переиспользовать без пересборки кандидатов и проверки разметки; предпочтительный
+следующий контракт для таких сравнений — relevant time intervals и temporal IoU.
 
 ## Запуск
 

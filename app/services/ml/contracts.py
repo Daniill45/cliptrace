@@ -38,6 +38,21 @@ class TranscriptChunk:
     language: str | None = None
 
 
+class TranscriptChunkingStrategy(Protocol):
+    """Convert timestamped transcript units into persistence-ready text windows."""
+
+    @property
+    def version(self) -> str: ...
+
+    def chunk(
+        self,
+        segments: Sequence[TranscriptSegment],
+        *,
+        video_duration_seconds: float,
+        language: str | None = None,
+    ) -> tuple[TranscriptChunk, ...]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class IndexedFragment:
     """Persistence-neutral fragment produced by the offline indexing pipeline."""
@@ -75,3 +90,12 @@ class TextEmbedder(QueryEmbedder, Protocol):
     """Encode both indexed passages and online queries."""
 
     async def embed_documents(self, texts: Sequence[str]) -> Sequence[Embedding]: ...
+
+
+class CandidateReranker(Protocol):
+    """Score query-document pairs after first-stage retrieval."""
+
+    @property
+    def model_id(self) -> str: ...
+
+    async def score(self, query: str, documents: Sequence[str]) -> Sequence[float]: ...
