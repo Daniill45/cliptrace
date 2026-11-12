@@ -61,7 +61,7 @@ make down
 состояние контейнеров — через `make ps`.
 
 При первой индексации worker скачает модели в named volume `model_cache`; первый
-semantic-поиск дополнительно скачает quantized cross-encoder. Ревизии E5,
+semantic-поиск дополнительно скачает cross-encoder. Ревизии E5,
 cross-encoder и faster-whisper зафиксированы SHA, а размер Whisper задаётся alias `small`.
 На Apple Silicon внутри Podman используется ARM64 CPU; Metal/MPS контейнеру не
 требуется. Скорость первой обработки зависит от длины видео и ресурсов Podman machine.
